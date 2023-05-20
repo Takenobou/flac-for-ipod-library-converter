@@ -7,7 +7,7 @@ to convert these files using a worker pool approach.
 In addition to FLAC files, this tool also supports copying MP3 files without conversion, maintaining the directory 
 structure from the source directory to the destination directory.
 
-Since opus does not support embedded album art, this tool will take the album art from a file in the album directory 
+Since Opus does not support embedded album art, this tool will take the album art from a file in the album directory 
 with the name "cover.png" and convert it to a baseline 320x320 jpg as this works best with Rockbox (which is required 
 to play Opus files on the iPod classic).
 
@@ -21,6 +21,7 @@ you are transferring over usb 2.0 speeds (haha), but isnt supported by the stock
 ## Prerequisites
 The FLAC to AAC conversion uses qaac64.exe, so make sure you have it installed and available in your system path.
 You can download it from [here](https://github.com/nu774/qaac/releases) and follow the instructions to install it.
+
 The FLAC to Opus conversion uses opusenc.exe, so make sure you have it installed and available in your system path.
 You can download it from [here](https://opus-codec.org/downloads/) and follow the instructions to install it.
 
