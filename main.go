@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/disintegration/imaging"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,13 @@ func copyFile(srcFile, destFile string) (err error) {
 		}
 	}()
 
+	destDir := filepath.Dir(destFile)
+	if _, err := os.Stat(destDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return fmt.Errorf("unable to create destination directory: %w", err)
+		}
+	}
+
 	dest, err := os.Create(destFile)
 	if err != nil {
 		return fmt.Errorf("unable to create destination file: %w", err)
@@ -78,7 +86,7 @@ func convertFile(srcFile, destFile string, codec string, bitrate int) error {
 	return nil
 }
 
-func resizeAndConvertImage(srcFile, destFile string) error {
+func resizeAndSaveAsJPG(srcFile, destFile string) error {
 	if _, err := os.Stat(destFile); err == nil {
 		fmt.Printf("Skipping (file already exists): %s\n", destFile)
 		return nil
@@ -114,7 +122,7 @@ func worker(jobs <-chan Job, wg *sync.WaitGroup, codec string) {
 		}
 
 		if job.isFlac {
-			fmt.Printf("Converting: %s\n", job.srcFile)
+			fmt.Printf("Converting: %s to %s\n", job.srcFile, job.destFile)
 			if err := convertFile(job.srcFile, job.destFile, codec, job.bitrate); err != nil {
 				fmt.Printf("Error converting file: %s\n", err)
 			}
@@ -127,47 +135,32 @@ func worker(jobs <-chan Job, wg *sync.WaitGroup, codec string) {
 	}
 }
 
-func main() {
-	flag.Parse()
-
-	if srcDir == "" || destDir == "" {
-		fmt.Println("Both source and destination directories should be specified.")
-		os.Exit(1)
-	}
-
-	fmt.Printf("Source directory: %s\n", srcDir)
-	fmt.Printf("Destination directory: %s\n", destDir)
-	fmt.Printf("Number of workers: %d\n", numWorkers)
-
-	if codec == "opus" {
-		bitrate = 160
-	}
-
-	jobs := make(chan Job)
-	var wg sync.WaitGroup
-
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go worker(jobs, &wg, codec)
-	}
-
-	err := filepath.Walk(srcDir, func(path string, f os.FileInfo, err error) error {
+func generateJobs(jobs chan<- Job) error {
+	return filepath.Walk(srcDir, func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return fmt.Errorf("error visiting file: %w", err)
 		}
 
 		if f.IsDir() {
-			if cover, err := os.Stat(filepath.Join(path, "cover.png")); err == nil && !cover.IsDir() {
+			coverPng, errPng := os.Stat(filepath.Join(path, "cover.png"))
+			coverJpg, errJpg := os.Stat(filepath.Join(path, "cover.jpg"))
+			if (errPng == nil && !coverPng.IsDir()) || (errJpg == nil && !coverJpg.IsDir()) {
 				relDir, err := filepath.Rel(srcDir, path)
 				if err != nil {
 					return fmt.Errorf("unable to determine relative directory path: %w", err)
 				}
-				destDir := filepath.Join(destDir, relDir)
-				if err := os.MkdirAll(destDir, 0755); err != nil {
+				destDirPath := filepath.Join(destDir, relDir)
+				if err := os.MkdirAll(destDirPath, 0755); err != nil {
 					return fmt.Errorf("unable to create destination directory: %w", err)
 				}
+				coverSrcFile := ""
 				coverDestFile := filepath.Join(destDir, "cover.jpg")
-				if err := resizeAndConvertImage(filepath.Join(path, "cover.png"), coverDestFile); err != nil {
+				if errPng == nil {
+					coverSrcFile = filepath.Join(path, "cover.png")
+				} else {
+					coverSrcFile = filepath.Join(path, "cover.jpg")
+				}
+				if err := resizeAndSaveAsJPG(coverSrcFile, coverDestFile); err != nil {
 					fmt.Printf("Error resizing and converting image: %s\n", err)
 				}
 			}
@@ -193,15 +186,50 @@ func main() {
 
 		return nil
 	})
+}
 
+func main() {
+	// Parse command-line flags.
+	flag.Parse()
+	// Exit if source or destination directories are not specified.
+	if srcDir == "" || destDir == "" {
+		log.Fatalln("Both source and destination directories should be specified.")
+	}
+
+	fmt.Printf("Source directory: %s\n", srcDir)
+	fmt.Printf("Destination directory: %s\n", destDir)
+	fmt.Printf("Number of workers: %d\n", numWorkers)
+
+	// Set bitrate for the opus codec.
+	if codec == "opus" {
+		bitrate = 160
+	}
+
+	// Create a channel to send jobs to the workers.
+	jobs := make(chan Job)
+
+	// WaitGroup to keep track of running goroutines.
+	var wg sync.WaitGroup
+
+	// Spawn worker goroutines.
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(jobs, &wg, codec)
+	}
+
+	// Walk the source directory and generate jobs.
+	err := generateJobs(jobs)
+
+	// Close the jobs channel after all jobs have been sent.
 	close(jobs)
 
+	// Wait for all workers to finish.
 	wg.Wait()
 
+	// Exit if there was an error during job generation.
 	if err != nil {
-		fmt.Printf("Error processing files: %s\n", err)
-		os.Exit(1)
-	} else {
-		fmt.Println("Conversion complete.")
+		log.Fatalf("Error processing files: %s\n", err)
 	}
+
+	fmt.Println("Conversion complete.")
 }
